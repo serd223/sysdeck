@@ -23,23 +23,20 @@ NOTES:
 The symlink '/proc/<pid>/exe' points to the executable (requires sudo permissions and the use of readlink(2))
 The file '/proc/<pid>/cmdline' contains the command line string that invoked the program (easily readable)
 TODO: The directory '/proc/<pid>/task' contains the <tid> directories of threads associated with this proc
-If scanning the '/proc/' directory manually becomes too cumbersome, perhaps parse the output of something like `ps -eLo pid,tid,user,%cpu,%mem,args instead
+If scanning the '/proc/' directory manually becomes too cumbersome, perhaps parse the output of something like `ps -eLo pid,tid,user,%cpu,%mem,args` instead
 */
 
 #define CMD_BUF_SIZE 4096
-// Max size of the pathname string here is 270 bytes since dirent.d_name is char[256] but I set the size to 512 for a nice even number
-#define CMDLINE_PATHNAME_BUF_SIZE 512
 
+char cmd_buf[CMD_BUF_SIZE] = {0};
 int main(void) {
     DIR* proc_dir = opendir("/proc/");
-    char cmdline_pathname_buf[CMDLINE_PATHNAME_BUF_SIZE] = {0};
-    char cmd_buf[CMD_BUF_SIZE] = {0};
     // readdir(2) is in the POSIX standard but not in the C standard
     for (struct dirent* dir = readdir(proc_dir); dir; dir = readdir(proc_dir)) {
         // /proc/./ also has a cmdline file but it is irrelevant to us so we explicitly ignore it
         if (dir->d_type == DT_DIR && dir->d_name[0] != '.') {
-            sprintf(cmdline_pathname_buf, "/proc/%s/cmdline", dir->d_name);
-            FILE* cmdline = fopen(cmdline_pathname_buf, "r");
+            sprintf(cmd_buf, "/proc/%s/cmdline", dir->d_name);
+            FILE* cmdline = fopen(cmd_buf, "r");
             if (cmdline) {
                 printf("[INFO] Command line of pid %s: ", dir->d_name);
                 size_t n = fread(cmd_buf, sizeof *cmd_buf, CMD_BUF_SIZE - 1, cmdline);
