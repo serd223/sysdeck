@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <termios.h>
@@ -27,74 +28,78 @@ If scanning the '/proc/' directory manually becomes too cumbersome, perhaps pars
 */
 
 #define CMD_BUF_SIZE 4096
+#define CSI "\033["
+#define NL CSI"K\r\n"
 
 char cmd_buf[CMD_BUF_SIZE] = {0};
 int main(void) {
-    DIR* proc_dir = opendir("/proc/");
-    // readdir(2) is in the POSIX standard but not in the C standard
-    for (struct dirent* dir = readdir(proc_dir); dir; dir = readdir(proc_dir)) {
-        // /proc/./ also has a cmdline file but it is irrelevant to us so we explicitly ignore it
-        if (dir->d_type == DT_DIR && dir->d_name[0] != '.') {
-            sprintf(cmd_buf, "/proc/%s/cmdline", dir->d_name);
-            FILE* cmdline = fopen(cmd_buf, "r");
-            if (cmdline) {
-                printf("[INFO] Command line of pid %s: ", dir->d_name);
-                size_t n = fread(cmd_buf, sizeof *cmd_buf, CMD_BUF_SIZE - 1, cmdline);
-                // the cmdline file contains the program name and the list of arguements as a null-seperated list, so we iterate through it like this
-                for (char* i = cmd_buf; i < cmd_buf + n; i += strlen(i) + 1) printf("%s ", i);
-                printf("\n");
-                fclose(cmdline);
-            }
-
-        }
-    }
-    closedir(proc_dir);
-   
+    // Init 
     if (!isatty(STDIN_FILENO)) return 1;
 
     struct termios saved = {0};
     if (tcgetattr(STDIN_FILENO, &saved) != 0) {
         fprintf(stderr, "[ERROR] %s\n", strerror(errno));
         return 1;
-    } else {
-        struct termios raw = saved;
-        make_raw(&raw);
-        printf("[INFO] Entering raw mode... (CTRL+C to exit)\n");
-        tcsetattr(STDIN_FILENO, TCSANOW, &raw);
-        printf("\033[?25l"); // Escape code to hide cursor
-        fflush(stdout);
     }
 
-    int printed_n = 0;    
+    system("tput smcup"); // Enter alternate screen
+    printf(CSI";H"); // Move Cursor to (1, 1)
+    struct termios raw = saved;
+    make_raw(&raw);
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+    printf(CSI"?25l"); // Escape code to hide cursor
+    fflush(stdout);
+
+    // Main loop
     for (char c;;) {
         ssize_t n = read(STDIN_FILENO, &c, 1);
         if (n < 0) {
             fprintf(stderr, "[ERROR] %s\r\n", strerror(errno));
             break;
-        } else if (n > 0) {
-            int current_printed_n = printf("Code: %d", c);
-            for (int i = 0; i < printed_n - current_printed_n; ++i) printf(" ");
-            printf("\r");
-            fflush(stdout);
-            printed_n = current_printed_n;
+        }
+
+        printf(CSI";H"); // Move Cursor to (1, 1)
+
+        printf("[INFO] Entering raw mode... (CTRL+C to exit)"NL);
+        DIR* proc_dir = opendir("/proc/"); // readdir consumes proc_dir so we have to open it once more
+        // readdir(3) is in the POSIX standard but not in the C standard
+        for (struct dirent* dir = readdir(proc_dir); dir; dir = readdir(proc_dir)) {
+            // /proc/./ also has a cmdline file but it is irrelevant to us so we explicitly ignore it
+            if (dir->d_type == DT_DIR && dir->d_name[0] != '.') {
+                sprintf(cmd_buf, "/proc/%s/cmdline", dir->d_name);
+                FILE* cmdline = fopen(cmd_buf, "r");
+                if (cmdline) {
+                    printf("%4s: ", dir->d_name);
+                    size_t n = fread(cmd_buf, sizeof *cmd_buf, CMD_BUF_SIZE - 1, cmdline);
+                    // the cmdline file contains the program name and the list of arguements as a null-seperated list, so we iterate through it like this
+                    for (char* i = cmd_buf; i < cmd_buf + n; i += strlen(i) + 1) printf("%s ", i);
+                    printf(NL);
+                    fclose(cmdline);
+                }
+
+            }
+        }
+        closedir(proc_dir);
+
+        if (n > 0) {
+            printf("Code: %d"NL, c);
             if (c == 3) { // CTRL+C
-                current_printed_n = printf("^C");
-                for (int i = 0; i < printed_n - current_printed_n; ++i) printf(" ");
-                printf("\r\n");
+                printf("^C"NL);
                 fflush(stdout);
                 break;
             }
         } else {
-            int current_printed_n = printf("Press a key to see its ASCII code.");
-            for (int i = 0; i < printed_n - current_printed_n; ++i) printf(" ");
-            printf("\r");
-            fflush(stdout);
-            printed_n = current_printed_n;
+            printf("Press a key to see its ASCII code."NL);
         }
+        printf(CSI"J"); // Clear the rest of the screen
+        fflush(stdout);
     }
 
+
+    // Cleanup
     tcsetattr(STDIN_FILENO, TCSANOW, &saved);
-    printf("\033[?25h"); // Escape code to show cursor
+    printf(CSI"?25h"); // Escape code to show cursor
     printf("[INFO] Restored terminal.\n");
+    system("tput rmcup"); // Leave alternate screen
     return 0;
 }
