@@ -22,7 +22,8 @@ void make_raw(struct termios *t) {
 NOTES:
 The symlink '/proc/<pid>/exe' points to the executable (requires sudo permissions and the use of readlink(2))
 The file '/proc/<pid>/cmdline' contains the command line string that invoked the program (easily readable)
-TODO: The directory '/proc/<pid>/task' contains the <pid> directories of tasks associated with this proc
+TODO: The directory '/proc/<pid>/task' contains the <tid> directories of threads associated with this proc
+If scanning the '/proc/' directory manually becomes too cumbersome, perhaps parse the output of something like `ps -eLo pid,tid,user,%cpu,%mem,args instead
 */
 
 #define CMD_BUF_SIZE 4096
@@ -40,12 +41,10 @@ int main(void) {
             sprintf(cmdline_pathname_buf, "/proc/%s/cmdline", dir->d_name);
             FILE* cmdline = fopen(cmdline_pathname_buf, "r");
             if (cmdline) {
-                printf("Command line of pid %s: ", dir->d_name);
+                printf("[INFO] Command line of pid %s: ", dir->d_name);
                 size_t n = fread(cmd_buf, sizeof *cmd_buf, CMD_BUF_SIZE - 1, cmdline);
                 // the cmdline file contains the program name and the list of arguements as a null-seperated list, so we iterate through it like this
-                for (char* i = cmd_buf; i < cmd_buf + n; i += strlen(i) + 1) {
-                    printf("%s ", i);
-                }
+                for (char* i = cmd_buf; i < cmd_buf + n; i += strlen(i) + 1) printf("%s ", i);
                 printf("\n");
                 fclose(cmdline);
             }
