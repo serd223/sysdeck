@@ -26,11 +26,19 @@ The file '/proc/<pid>/cmdline' contains the command line string that invoked the
 TODO: The directory '/proc/<pid>/task' contains the <tid> directories of threads associated with this proc
 If scanning the '/proc/' directory manually becomes too cumbersome, perhaps parse the output of something like `ps -eLo pid,tid,user,%cpu,%mem,args` instead
 */
-
-#define CMD_BUF_SIZE 4096
 #define CSI "\033["
 #define NL CSI"K\r\n"
 
+#define RED     CSI"31m"
+#define GREEN   CSI"32m"
+#define YELLOW  CSI"33m"
+#define BLUE    CSI"34m"
+#define MAGENTA CSI"35m"
+#define CYAN    CSI"36m"
+#define WHITE   CSI"37m"
+#define RESET   CSI"0m"
+
+#define CMD_BUF_SIZE 4096
 char cmd_buf[CMD_BUF_SIZE] = {0};
 int main(void) {
     // Init 
@@ -60,7 +68,7 @@ int main(void) {
 
         printf(CSI";H"); // Move Cursor to (1, 1)
 
-        printf("[INFO] Entering raw mode... (CTRL+C to exit)"NL);
+        printf(RED"[INFO] Entering raw mode... (CTRL+C to exit)"RESET NL);
         DIR* proc_dir = opendir("/proc/"); // readdir consumes proc_dir so we have to open it once more
         // readdir(3) is in the POSIX standard but not in the C standard
         for (struct dirent* dir = readdir(proc_dir); dir; dir = readdir(proc_dir)) {
@@ -69,11 +77,12 @@ int main(void) {
                 sprintf(cmd_buf, "/proc/%s/cmdline", dir->d_name);
                 FILE* cmdline = fopen(cmd_buf, "r");
                 if (cmdline) {
-                    printf("%4s: ", dir->d_name);
+                    printf(CYAN"%4s"RESET": ", dir->d_name);
                     size_t n = fread(cmd_buf, sizeof *cmd_buf, CMD_BUF_SIZE - 1, cmdline);
                     // the cmdline file contains the program name and the list of arguements as a null-seperated list, so we iterate through it like this
+                    printf(GREEN);
                     for (char* i = cmd_buf; i < cmd_buf + n; i += strlen(i) + 1) printf("%s ", i);
-                    printf(NL);
+                    printf(RESET NL);
                     fclose(cmdline);
                 }
 
@@ -82,14 +91,14 @@ int main(void) {
         closedir(proc_dir);
 
         if (n > 0) {
-            printf("Code: %d"NL, c);
+            printf(BLUE"Code: %d"RESET NL, c);
             if (c == 3) { // CTRL+C
                 printf("^C"NL);
                 fflush(stdout);
                 break;
             }
         } else {
-            printf("Press a key to see its ASCII code."NL);
+            printf(RED"Press a key to see its ASCII code."RESET NL);
         }
         printf(CSI"J"); // Clear the rest of the screen
         fflush(stdout);
