@@ -50,7 +50,17 @@ int main(void) {
         return 1;
     }
 
+    // `tput` retrieves the value of `smcup` and `rmcup` via `infocmp` which parses the correct `terminfo` file inside the appropriate `terminfo` directory according to the TERM environment variable
+    // The `terminfo` files could be inside: (searched in this order)
+    //  - $HOME/.terminfo/
+    //  - /etc/terminfo/
+    //  - /lib/terminfo/
+    //  - /usr/share/terminfo/
+    // So if your TERM variable is set to `xterm-256color`, your correct `terminfo` file could be /lib/terminfo/x/xterm-256color (which is the case in my Debian install)
+    // We _could_ just do all that ourselves in code but for now I will stick with `tput` for easy portability
     system("tput smcup"); // Enter alternate screen
+    // printf(CSI"?1049h"CSI"22;0;0t"); // Enter alternate screen (smcup) for xterm-256color
+    // fflush(stdout);
     printf(CSI";H"); // Move Cursor to (1, 1)
     struct termios raw = saved;
     make_raw(&raw);
@@ -110,5 +120,7 @@ int main(void) {
     printf(CSI"?25h"); // Escape code to show cursor
     printf("[INFO] Restored terminal.\n");
     system("tput rmcup"); // Leave alternate screen
+    // printf(CSI"?1049l"CSI"23;0;0t"); // Leave alternate screen (rmcup) for xterm-256color
+    // fflush(stdout);
     return 0;
 }
