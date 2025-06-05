@@ -103,7 +103,11 @@ int main(void) {
                     char* tmp_str2 = tmp_str + n;
                     char* tmp_cur = tmp_str2;
                     // the cmdline file contains the program name and the list of arguements as a null-seperated list, so we iterate through it like this
-                    for (char* i = tmp_str; i < tmp_str + n; i += strlen(i) + 1) tmp_cur += sprintf(tmp_cur, "%s ", i);
+                    for (char* i = tmp_str; i < tmp_str + n;) {
+                        int n = sprintf(tmp_cur, "%s ", i);
+                        tmp_cur += n;
+                        i += n + 1;
+                    }
                     fclose(cmdline);
 
                     // Center the command line string
