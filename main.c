@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <errno.h>
 #include <termios.h>
@@ -28,9 +29,13 @@ TODO: The directory '/proc/<pid>/task' contains the <tid> directories of threads
 Although it kinda contradicts the whole idea of the project, if scanning the '/proc/' directory manually becomes too cumbersome, perhaps parse the output of something like `ps -eLo pid,tid,user,%cpu,%mem,args` instead
 */
 
-#define CSI "\033["
-#define NL CSI"K\r\n"
+#define PRINT(fmt) (line_count + 1 < w_size.ws_row) ? printf(fmt) : 0
+#define PRINTF(fmt, ...) (line_count + 1 < w_size.ws_row) ? printf(fmt, __VA_ARGS__) : 0
 
+#define CSI "\033["
+#define NLC CSI"K\r\n"
+#define NL PRINT(NLC); line_count++
+#define BLACK   CSI"30m"
 #define RED     CSI"31m"
 #define GREEN   CSI"32m"
 #define YELLOW  CSI"33m"
@@ -39,6 +44,12 @@ Although it kinda contradicts the whole idea of the project, if scanning the '/p
 #define CYAN    CSI"36m"
 #define WHITE   CSI"37m"
 #define RESET   CSI"0m"
+
+// "0000: "
+#define PIDTEXT_LEN 6
+
+#define MAX_SHOWN_PROCS 20
+#define MAX_SHOWN_SIGNALS 10
 
 #define TMP_STR_SIZE 4096
 char tmp_str[TMP_STR_SIZE] = {0};
@@ -74,8 +85,21 @@ int main(void) {
     fflush(stdout);
 
     struct winsize w_size;
+
+    // State
+    size_t signals_scroll = 0, current_signal = 0;
+    size_t procs_scroll = 0, current_proc = 0;
+    size_t proc_count = 0, shown_procs = 0;
+    int current_pid = 0, current_thread = 0;
+    bool show_help = true;
+    bool sending_signal = false;
+
+    // TODO: Unused
+    (void)signals_scroll; (void)current_signal; (void) current_thread;
+
     // Main loop
     for (char c;;) {
+        size_t line_count = 0;
         ssize_t n = read(STDIN_FILENO, &c, 1);
         if (n < 0) {
             fprintf(stderr, "[ERROR] %s\r\n", strerror(errno));
@@ -83,12 +107,22 @@ int main(void) {
         }
         ioctl(STDOUT_FILENO, TIOCGWINSZ, &w_size);
 
-        printf(CSI";H"); // Move Cursor to (1, 1);
+        printf(CSI";H"RESET); // Move Cursor to (1, 1);
 
-        printf(RED"[INFO] Entering raw mode... (CTRL+C to exit)"NL);
-        printf("[INFO] Column count: %d"NL,       w_size.ws_col);
-        printf("[INFO] Row count:    %d"RESET NL, w_size.ws_row);
+        int badge_len = sprintf(tmp_str, "Currently running processes: %lu | Processes shown: %lu", proc_count, shown_procs);
+        bool fits = badge_len < w_size.ws_col;
+        PRINT(WHITE CSI"48;5;1m");
+        if (fits) PRINTF("%*s", (w_size.ws_col - badge_len)/2 - PIDTEXT_LEN, "");
+        PRINTF("%.*s", fits ? badge_len : w_size.ws_col, tmp_str); NL;
 
+        PRINT(RESET WHITE CSI"48;5;4mPID |");
+        PRINTF("%*s", (w_size.ws_col - 8)/2 - 5, "");
+        PRINT("CMDLINE "); NL;
+        PRINT(RESET BLUE);
+        for (int i = 0; i < w_size.ws_col; ++i) printf("-");
+        PRINT(RESET); NL;
+
+        proc_count = 0; shown_procs = 0;
         DIR* proc_dir = opendir("/proc/"); // readdir consumes proc_dir so we have to open it once more
         // readdir(3) is in the POSIX standard but not in the C standard
         for (struct dirent* dir = readdir(proc_dir); dir; dir = readdir(proc_dir)) {
@@ -97,38 +131,90 @@ int main(void) {
                 sprintf(tmp_str, "/proc/%s/cmdline", dir->d_name);
                 FILE* cmdline = fopen(tmp_str, "r");
                 if (cmdline) {
-                    int pid_len = printf(CYAN"%4s"RESET": ", dir->d_name);
-                    size_t n = fread(tmp_str, sizeof *tmp_str, TMP_STR_SIZE - 1, cmdline);
+                    if (shown_procs < MAX_SHOWN_PROCS && proc_count >= procs_scroll) {
+                        PRINTF(CYAN"%4s"RESET": ", dir->d_name);
+                        size_t n = fread(tmp_str, sizeof *tmp_str, TMP_STR_SIZE - 1, cmdline);
 
-                    char* tmp_str2 = tmp_str + n;
-                    char* tmp_cur = tmp_str2;
-                    // the cmdline file contains the program name and the list of arguements as a null-seperated list, so we iterate through it like this
-                    for (char* i = tmp_str; i < tmp_str + n;) {
-                        int n = sprintf(tmp_cur, "%s ", i);
-                        tmp_cur += n;
-                        i += n + 1;
+                        char* tmp_str2 = tmp_str + n;
+                        char* tmp_cur = tmp_str2;
+                        // the cmdline file contains the program name and the list of arguements as a null-seperated list, so we iterate through it like this
+                        for (char* i = tmp_str; i < tmp_str + n;) {
+                            int n = sprintf(tmp_cur, "%s ", i);
+                            tmp_cur += n;
+                            i += n + 1;
+                        }
+                        fclose(cmdline);
+
+                        // Center the command line string
+                        int cmdline_len = tmp_cur - tmp_str2;
+                        bool fits = cmdline_len + PIDTEXT_LEN < w_size.ws_col;
+                        if (fits) PRINTF("%*s", (w_size.ws_col - cmdline_len)/2 - PIDTEXT_LEN, "");
+                        if (current_proc == shown_procs) {
+                            current_pid = atoi(dir->d_name);
+                            printf(CSI"7m");
+                        }
+                        if (PRINTF(GREEN"%.*s"RESET, fits ? cmdline_len : w_size.ws_col - PIDTEXT_LEN, tmp_str2) > 0) shown_procs++;
+                        NL;
                     }
-                    fclose(cmdline);
-
-                    // Center the command line string
-                    int cmdline_len = tmp_cur - tmp_str2;
-                    printf("%*s", (w_size.ws_col - cmdline_len)/2 - pid_len, "");
-                    printf(GREEN"%s"RESET NL, tmp_str2);
+                    proc_count++;
                 }
 
             }
         }
         closedir(proc_dir);
+        if (current_proc >= shown_procs) {
+            current_proc = shown_procs - 1;
+        }
 
         if (n > 0) {
-            printf(BLUE"Code: %d"RESET NL, c);
             if (c == 3) { // CTRL+C
-                printf("^C"NL);
+                PRINT("^C"); NL;
                 fflush(stdout);
                 break;
+            } else if (c == 'q' || c == 'Q') {
+                break;  
+            } else if (!sending_signal && (c == 'h' || c == 'H')) {
+                show_help = !show_help;
+            } else if (c == 'k' || c == 'K') {
+                if (!sending_signal) {
+                    if (current_proc <= 0) {
+                        if (procs_scroll > 0) procs_scroll--;
+                    } else {
+                        current_proc--;
+                    }
+                } else {
+                    
+                }
+            } else if (c == 'j' || c == 'J') {
+                if (!sending_signal) {
+                    if (current_proc >= shown_procs - 1) {
+                        if (shown_procs + procs_scroll < proc_count) procs_scroll++;
+                    } else {
+                        current_proc++;
+                    }
+                } else {
+                    
+                }
+            } else if (!sending_signal && (c == 't' || c == 'T')) {
+                sprintf(tmp_str, "kill -s TERM %d", current_pid);
+                system(tmp_str);
+            } else if (!sending_signal && (c == 's' || c == 'S')) {
+                sending_signal = true;
+                current_signal = 0;
+            } else if (sending_signal && c == 27) { // ESC
+                sending_signal = false;
             }
-        } else {
-            printf(RED"Press a key to see its ASCII code."RESET NL);
+        }
+        PRINT(BLUE);
+        if (line_count + 1 < w_size.ws_row) for (int i = 0; i < w_size.ws_col; ++i) printf("-");
+        PRINT(RESET); NL;
+        if (show_help && !sending_signal) {
+            PRINT(WHITE CSI"48;5;4mK/J      -> Select Up/Down"); NL;
+            PRINT("H        -> Toggle this help text"); NL;
+            PRINT("Q/CTRL+C -> Quit"); NL;
+            PRINT("T        -> Send SIGTERM to selected proc"); NL;
+            PRINT("S        -> Send signal to selected proc (opens signal selection menu)"); NL;
+            PRINT("ESC      -> Cancel send signal"); NL; printf(RESET);
         }
         printf(CSI"J"); // Clear the rest of the screen
         fflush(stdout);
