@@ -1,3 +1,4 @@
+# No --std=c99 because we make use of non standard POSIX functions
 C_FLAGS = -Wextra -Wall -pedantic
 LIB_ARGS = 
 
@@ -10,4 +11,4 @@ a := $(file > .clangd, CompileFlags:)
 b := $(file >> .clangd, 	Add: [$(FLAGS_LIST)])
 
 main: main.c
-	clang $(C_FLAGS) main.c -o main $(LIB_ARGS)
+	cc $(C_FLAGS) main.c -o main $(LIB_ARGS)
