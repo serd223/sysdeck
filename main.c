@@ -5,6 +5,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/ioctl.h>
 
 // see termios(3) 'Raw mode' for details
 void make_raw(struct termios *t) {
@@ -24,8 +25,9 @@ NOTES:
 The symlink '/proc/<pid>/exe' points to the executable (requires sudo permissions and the use of readlink(2))
 The file '/proc/<pid>/cmdline' contains the command line string that invoked the program (easily readable)
 TODO: The directory '/proc/<pid>/task' contains the <tid> directories of threads associated with this proc
-If scanning the '/proc/' directory manually becomes too cumbersome, perhaps parse the output of something like `ps -eLo pid,tid,user,%cpu,%mem,args` instead
+Although it kinda contradicts the whole idea of the project, if scanning the '/proc/' directory manually becomes too cumbersome, perhaps parse the output of something like `ps -eLo pid,tid,user,%cpu,%mem,args` instead
 */
+
 #define CSI "\033["
 #define NL CSI"K\r\n"
 
@@ -38,8 +40,8 @@ If scanning the '/proc/' directory manually becomes too cumbersome, perhaps pars
 #define WHITE   CSI"37m"
 #define RESET   CSI"0m"
 
-#define CMD_BUF_SIZE 4096
-char cmd_buf[CMD_BUF_SIZE] = {0};
+#define TMP_STR_SIZE 4096
+char tmp_str[TMP_STR_SIZE] = {0};
 int main(void) {
     // Init 
     if (!isatty(STDIN_FILENO)) return 1;
@@ -61,13 +63,17 @@ int main(void) {
     system("tput smcup"); // Enter alternate screen
     // printf(CSI"?1049h"CSI"22;0;0t"); // Enter alternate screen (smcup) for xterm-256color
     // fflush(stdout);
+
     printf(CSI";H"); // Move Cursor to (1, 1)
+
     struct termios raw = saved;
     make_raw(&raw);
     tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+
     printf(CSI"?25l"); // Escape code to hide cursor
     fflush(stdout);
 
+    struct winsize w_size;
     // Main loop
     for (char c;;) {
         ssize_t n = read(STDIN_FILENO, &c, 1);
@@ -75,25 +81,35 @@ int main(void) {
             fprintf(stderr, "[ERROR] %s\r\n", strerror(errno));
             break;
         }
+        ioctl(STDOUT_FILENO, TIOCGWINSZ, &w_size);
 
-        printf(CSI";H"); // Move Cursor to (1, 1)
+        printf(CSI";H"); // Move Cursor to (1, 1);
 
-        printf(RED"[INFO] Entering raw mode... (CTRL+C to exit)"RESET NL);
+        printf(RED"[INFO] Entering raw mode... (CTRL+C to exit)"NL);
+        printf("[INFO] Column count: %d"NL,       w_size.ws_col);
+        printf("[INFO] Row count:    %d"RESET NL, w_size.ws_row);
+
         DIR* proc_dir = opendir("/proc/"); // readdir consumes proc_dir so we have to open it once more
         // readdir(3) is in the POSIX standard but not in the C standard
         for (struct dirent* dir = readdir(proc_dir); dir; dir = readdir(proc_dir)) {
             // /proc/./ also has a cmdline file but it is irrelevant to us so we explicitly ignore it
             if (dir->d_type == DT_DIR && dir->d_name[0] != '.') {
-                sprintf(cmd_buf, "/proc/%s/cmdline", dir->d_name);
-                FILE* cmdline = fopen(cmd_buf, "r");
+                sprintf(tmp_str, "/proc/%s/cmdline", dir->d_name);
+                FILE* cmdline = fopen(tmp_str, "r");
                 if (cmdline) {
-                    printf(CYAN"%4s"RESET": ", dir->d_name);
-                    size_t n = fread(cmd_buf, sizeof *cmd_buf, CMD_BUF_SIZE - 1, cmdline);
+                    int pid_len = printf(CYAN"%4s"RESET": ", dir->d_name);
+                    size_t n = fread(tmp_str, sizeof *tmp_str, TMP_STR_SIZE - 1, cmdline);
+
+                    char* tmp_str2 = tmp_str + n;
+                    char* tmp_cur = tmp_str2;
                     // the cmdline file contains the program name and the list of arguements as a null-seperated list, so we iterate through it like this
-                    printf(GREEN);
-                    for (char* i = cmd_buf; i < cmd_buf + n; i += strlen(i) + 1) printf("%s ", i);
-                    printf(RESET NL);
+                    for (char* i = tmp_str; i < tmp_str + n; i += strlen(i) + 1) tmp_cur += sprintf(tmp_cur, "%s ", i);
                     fclose(cmdline);
+
+                    // Center the command line string
+                    int cmdline_len = tmp_cur - tmp_str2;
+                    printf("%*s", (w_size.ws_col - cmdline_len)/2 - pid_len, "");
+                    printf(GREEN"%s"RESET NL, tmp_str2);
                 }
 
             }
