@@ -63,17 +63,17 @@ typedef struct {
 
 typedef struct {
     Proc* items;
-    size_t len, cap;
+    size_t len, __cap;
 } Procs;
 
 void push_proc(Procs* procs, Proc proc) {
-    if (procs->cap == 0) {
-        procs->cap = 2;
-        procs->items = malloc(procs->cap * sizeof (*procs->items));
+    if (procs->__cap == 0) {
+        procs->__cap = 2;
+        procs->items = malloc(procs->__cap * sizeof (*procs->items));
     }
-    if (procs->len >= procs->cap) {
-        procs->cap = procs->cap * 2;
-        procs->items = realloc(procs->items, procs->cap * sizeof (*procs->items));
+    if (procs->len >= procs->__cap) {
+        procs->__cap = procs->__cap * 2;
+        procs->items = realloc(procs->items, procs->__cap * sizeof (*procs->items));
     }
     procs->items[procs->len++] = proc;
 }
