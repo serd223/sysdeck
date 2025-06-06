@@ -27,10 +27,14 @@ The symlink '/proc/<pid>/exe' points to the executable (requires sudo permission
 The file '/proc/<pid>/cmdline' contains the command line string that invoked the program (easily readable)
 TODO: The directory '/proc/<pid>/task' contains the <tid> directories of threads associated with this proc
 Although it kinda contradicts the whole idea of the project, if scanning the '/proc/' directory manually becomes too cumbersome, perhaps parse the output of something like `ps -eLo pid,tid,user,%cpu,%mem,args` instead
+'/proc/meminfo/' for system memory info
+'/proc/<pid>/stat/' for process memory info
+Use the time informaton from '/proc/cpuinfo' and the stat file to calculate %CPU and cpu core utilization
+Divide the time data from the files by clock_tick to get the time in seconds
 */
 
-#define PRINT(fmt) (line_count + 1 < w_size.ws_row) ? printf(fmt) : 0
-#define PRINTF(fmt, ...) (line_count + 1 < w_size.ws_row) ? printf(fmt, __VA_ARGS__) : 0
+#define PRINT(fmt) ((line_count + 1 < w_size.ws_row) ? printf(fmt) : 0)
+#define PRINTF(fmt, ...) ((line_count + 1 < w_size.ws_row) ? printf(fmt, __VA_ARGS__) : -1)
 
 #define CSI "\033["
 #define NLC CSI"K\r\n"
@@ -51,9 +55,41 @@ Although it kinda contradicts the whole idea of the project, if scanning the '/p
 #define MAX_SHOWN_PROCS 20
 #define MAX_SHOWN_SIGNALS 10
 
+typedef struct {
+    int pid;
+    char cmdline[128];
+    size_t time; // utime + stime
+} Proc;
+
+typedef struct {
+    Proc* items;
+    size_t len, cap;
+} Procs;
+
+void push_proc(Procs* procs, Proc proc) {
+    if (procs->cap == 0) {
+        procs->cap = 2;
+        procs->items = malloc(procs->cap * sizeof (*procs->items));
+    }
+    if (procs->len >= procs->cap) {
+        procs->cap = procs->cap * 2;
+        procs->items = realloc(procs->items, procs->cap * sizeof (*procs->items));
+    }
+    procs->items[procs->len++] = proc;
+}
+Proc* search_pid(Procs* procs, int pid) {
+    for (size_t i = 0; i < procs->len; ++i) {
+        if (procs->items[i].pid == pid) {
+            return procs->items + i;
+        }
+    }
+    return NULL;
+}
+
 #define TMP_STR_SIZE 4096
 char tmp_str[TMP_STR_SIZE] = {0};
 int main(void) {
+    long clock_tick = sysconf(_SC_CLK_TCK);
     // Init 
     if (!isatty(STDIN_FILENO)) return 1;
 
@@ -89,17 +125,25 @@ int main(void) {
     // State
     size_t signals_scroll = 0, current_signal = 0;
     size_t procs_scroll = 0, current_proc = 0;
-    size_t proc_count = 0, shown_procs = 0;
+    size_t shown_procs = 0;
     int current_pid = 0, current_thread = 0;
     bool show_help = true;
     bool sending_signal = false;
+    Procs procs = {0}; // Leaks
+    Procs prev_procs = {0}; // Leaks
 
-    // TODO: Unused
-    (void)signals_scroll; (void)current_signal; (void) current_thread;
+    // Unused: TODO(SIGNALS)
+    (void)signals_scroll; (void)current_signal;
+
+    // Unused: TODO(THREADS)
+    (void)current_thread;
+
+    // Unsued: TODO(%CPU)
+    (void)prev_procs; (void)clock_tick;
 
     // Main loop
     for (char c;;) {
-        size_t line_count = 0;
+        size_t line_count = 0; // NOTE: Assumes that all lines fit the width of the terminal
         ssize_t n = read(STDIN_FILENO, &c, 1);
         if (n < 0) {
             fprintf(stderr, "[ERROR] %s\r\n", strerror(errno));
@@ -109,7 +153,7 @@ int main(void) {
 
         printf(CSI";H"RESET); // Move Cursor to (1, 1);
 
-        int badge_len = sprintf(tmp_str, "Currently running processes: %lu | Processes shown: %lu", proc_count, shown_procs);
+        int badge_len = sprintf(tmp_str, "Currently running processes: %lu | Processes shown: %lu", procs.len, shown_procs);
         bool fits = badge_len < w_size.ws_col;
         PRINT(WHITE CSI"48;5;1m");
         if (fits) PRINTF("%*s", (w_size.ws_col - badge_len)/2 - PIDTEXT_LEN, "");
@@ -122,49 +166,65 @@ int main(void) {
         for (int i = 0; i < w_size.ws_col; ++i) printf("-");
         PRINT(RESET); NL;
 
-        proc_count = 0; shown_procs = 0;
+        procs.len = 0; // Reset procs array
+        // Collect procs
         DIR* proc_dir = opendir("/proc/"); // readdir consumes proc_dir so we have to open it once more
         // readdir(3) is in the POSIX standard but not in the C standard
         for (struct dirent* dir = readdir(proc_dir); dir; dir = readdir(proc_dir)) {
             // /proc/./ also has a cmdline file but it is irrelevant to us so we explicitly ignore it
             if (dir->d_type == DT_DIR && dir->d_name[0] != '.') {
                 sprintf(tmp_str, "/proc/%s/cmdline", dir->d_name);
-                FILE* cmdline = fopen(tmp_str, "r");
+                FILE* cmdline = fopen(tmp_str, "rb");
                 if (cmdline) {
-                    if (shown_procs < MAX_SHOWN_PROCS && proc_count >= procs_scroll) {
-                        PRINTF(CYAN"%4s"RESET": ", dir->d_name);
-                        size_t n = fread(tmp_str, sizeof *tmp_str, TMP_STR_SIZE - 1, cmdline);
+                    Proc p = {0};
+                    p.pid = atoi(dir->d_name);
+                    size_t cmd_n = fread(tmp_str, sizeof *tmp_str, TMP_STR_SIZE - 1, cmdline);
+                    fclose(cmdline);
 
-                        char* tmp_str2 = tmp_str + n;
-                        char* tmp_cur = tmp_str2;
-                        // the cmdline file contains the program name and the list of arguements as a null-seperated list, so we iterate through it like this
-                        for (char* i = tmp_str; i < tmp_str + n;) {
-                            int n = sprintf(tmp_cur, "%s ", i);
-                            tmp_cur += n;
-                            i += n;
-                        }
-                        fclose(cmdline);
-
-                        // Center the command line string
-                        int cmdline_len = tmp_cur - tmp_str2;
-                        bool fits = cmdline_len + PIDTEXT_LEN < w_size.ws_col;
-                        if (fits) PRINTF("%*s", (w_size.ws_col - cmdline_len)/2 - PIDTEXT_LEN, "");
-                        if (current_proc == shown_procs) {
-                            current_pid = atoi(dir->d_name);
-                            printf(CSI"7m");
-                        }
-                        if (PRINTF(GREEN"%.*s"RESET, fits ? cmdline_len : w_size.ws_col - PIDTEXT_LEN, tmp_str2) > 0) shown_procs++;
-                        NL;
+                    // The memory starting from tmp_str + cmd_n is safe to use for our other temporary operations
+                    char* tmp_str2 = tmp_str + cmd_n;
+                    char* tmp_cur = tmp_str2;
+                    // Iterate over the null-seperated list inside the cmdline file
+                    for (char* i = tmp_str; i < tmp_str + cmd_n;) {
+                        int n = sprintf(tmp_cur, "%s ", i);
+                        tmp_cur += n;
+                        i += n;
                     }
-                    proc_count++;
+                    int cmdline_len = tmp_cur - tmp_str2;
+
+                    // -1 just in case we somehow mess up the string buffers and are left without a null terminator
+                    bool fits = (size_t)cmdline_len < sizeof(p.cmdline) - 1;
+                    memcpy(p.cmdline, tmp_str2, fits ? cmdline_len : sizeof(p.cmdline) - 1);
+                    push_proc(&procs, p);
                 }
 
             }
         }
         closedir(proc_dir);
-        if (current_proc >= shown_procs) {
-            current_proc = shown_procs - 1;
+
+        // Display procs
+        size_t pi;
+        for (pi = procs_scroll; pi < procs.len; ++pi) {
+            if ((pi - procs_scroll) >= MAX_SHOWN_PROCS) break;
+
+            Proc* p = procs.items + pi;
+            // PRINTF macro returns 0 if we ran out of lines to print on (checked via line_count which is set by PRINTF and PRINT)
+            if (PRINTF(CYAN"%4d"RESET": ", p->pid) < 0) break;
+
+            int cmdline_len = (int)strlen(p->cmdline);
+            bool fits = cmdline_len + PIDTEXT_LEN < w_size.ws_col;
+            // Padding to center the cmdline text
+            if (fits) PRINTF("%*s", (w_size.ws_col - cmdline_len)/2 - PIDTEXT_LEN, "");
+
+            if (current_proc == (pi - procs_scroll)) {
+                current_pid = p->pid;
+                printf(CSI"7m");
+            }
+
+            // Cut off the cmdline text if it doesn't fit on the screen
+            PRINTF(GREEN"%.*s"RESET, fits ? cmdline_len : (w_size.ws_col - PIDTEXT_LEN), p->cmdline); NL;
         }
+        shown_procs = pi - procs_scroll;
 
         if (n > 0) {
             if (c == 3) { // CTRL+C
@@ -188,7 +248,7 @@ int main(void) {
             } else if (c == 'j' || c == 'J') {
                 if (!sending_signal) {
                     if (current_proc >= shown_procs - 1) {
-                        if (shown_procs + procs_scroll < proc_count) procs_scroll++;
+                        if (shown_procs + procs_scroll < procs.len) procs_scroll++;
                     } else {
                         current_proc++;
                     }
