@@ -208,21 +208,29 @@ int main(void) {
             if ((pi - procs_scroll) >= MAX_SHOWN_PROCS) break;
 
             Proc* p = procs.items + pi;
+            bool is_current = current_proc == pi - procs_scroll;
+            if (is_current) {
+                current_pid = p->pid;
+                PRINT(CSI"48;5;2m"BLACK);
+            } else {
+                PRINT(CYAN);
+            }
             // PRINTF macro returns 0 if we ran out of lines to print on (checked via line_count which is set by PRINTF and PRINT)
-            if (PRINTF(CYAN"%4d"RESET": ", p->pid) < 0) break;
+            if (PRINTF("%4d"": ", p->pid) < 0) break;
 
             int cmdline_len = (int)strlen(p->cmdline);
             bool fits = cmdline_len + PIDTEXT_LEN < w_size.ws_col;
             // Padding to center the cmdline text
             if (fits) PRINTF("%*s", (w_size.ws_col - cmdline_len)/2 - PIDTEXT_LEN, "");
 
-            if (current_proc == (pi - procs_scroll)) {
-                current_pid = p->pid;
-                printf(CSI"7m");
-            }
 
             // Cut off the cmdline text if it doesn't fit on the screen
-            PRINTF(GREEN"%.*s"RESET, fits ? cmdline_len : (w_size.ws_col - PIDTEXT_LEN), p->cmdline); NL;
+            if (is_current) {
+                PRINTF(BLACK"%.*s", fits ? cmdline_len : (w_size.ws_col - PIDTEXT_LEN), p->cmdline);
+            } else {
+                PRINTF(GREEN"%.*s", fits ? cmdline_len : (w_size.ws_col - PIDTEXT_LEN), p->cmdline);
+            }
+            NL; PRINT(RESET);
         }
         shown_procs = pi - procs_scroll;
 
