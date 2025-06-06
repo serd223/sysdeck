@@ -34,12 +34,11 @@ Use the time informaton from '/proc/cpuinfo' and the stat file to calculate %CPU
 Divide the time data from the files by clock_tick to get the time in seconds
 */
 
-#define PRINT(fmt) ((line_count + 1 < w_size.ws_row) ? printf(fmt) : 0)
-#define PRINTF(fmt, ...) ((line_count + 1 < w_size.ws_row) ? printf(fmt, __VA_ARGS__) : 0)
+#define PRINTF(...) ((line_count + 1 < w_size.ws_row) ? printf(__VA_ARGS__) : 0)
 
 #define CSI "\033["
 #define NLC CSI"K\r\n"
-#define NL PRINT(NLC); line_count++
+#define NL PRINTF(NLC); line_count++
 #define BLACK   CSI"30m"
 #define RED     CSI"31m"
 #define GREEN   CSI"32m"
@@ -156,16 +155,16 @@ int main(void) {
 
         int badge_len = sprintf(tmp_str, "Currently running processes: %lu | Processes shown: %lu", procs.len, shown_procs);
         bool fits = badge_len < w_size.ws_col;
-        PRINT(WHITE CSI"48;5;1m");
+        PRINTF(WHITE CSI"48;5;1m");
         if (fits) PRINTF("%*s", (w_size.ws_col - badge_len)/2 - PIDTEXT_LEN, "");
         PRINTF("%.*s", fits ? badge_len : w_size.ws_col, tmp_str); NL;
 
-        PRINT(RESET WHITE CSI"48;5;4mPID |");
+        PRINTF(RESET WHITE CSI"48;5;4mPID |");
         PRINTF("%*s", (w_size.ws_col - 8)/2 - 5, "");
-        PRINT("CMDLINE "); NL;
-        PRINT(RESET BLUE);
+        PRINTF("CMDLINE "); NL;
+        PRINTF(RESET BLUE);
         for (int i = 0; i < w_size.ws_col; ++i) printf("-");
-        PRINT(RESET); NL;
+        PRINTF(RESET); NL;
 
         procs.len = 0; // Reset procs array
         // Collect procs
@@ -212,9 +211,9 @@ int main(void) {
             bool is_current = current_proc == pi - procs_scroll;
             if (is_current) {
                 current_pid = p->pid;
-                PRINT(CSI"48;5;2m"BLACK);
+                PRINTF(CSI"48;5;2m"BLACK);
             } else {
-                PRINT(CYAN);
+                PRINTF(CYAN);
             }
             // PRINTF macro returns 0 if we ran out of lines to print on (checked via line_count which is set by PRINTF and PRINT)
             if (PRINTF("%4d: ", p->pid) <= 0) break;
@@ -232,13 +231,13 @@ int main(void) {
             } else {
                 PRINTF(GREEN"%.*s", fits ? cmdline_len : (w_size.ws_col - PIDTEXT_LEN - padding_size), p->cmdline);
             }
-            NL; PRINT(RESET);
+            NL; PRINTF(RESET);
         }
         shown_procs = pi - procs_scroll;
 
         if (n > 0) {
             if (c == 3) { // CTRL+C
-                PRINT("^C"); NL;
+                PRINTF("^C"); NL;
                 fflush(stdout);
                 break;
             } else if (c == 'q' || c == 'Q') {
@@ -274,16 +273,16 @@ int main(void) {
                 sending_signal = false;
             }
         }
-        PRINT(BLUE);
+        PRINTF(BLUE);
         if (line_count + 1 < w_size.ws_row) for (int i = 0; i < w_size.ws_col; ++i) printf("-");
-        PRINT(RESET); NL;
+        PRINTF(RESET); NL;
         if (show_help && !sending_signal) {
-            PRINT(WHITE CSI"48;5;4mK/J      -> Select Up/Down"); NL;
-            PRINT("H        -> Toggle this help text"); NL;
-            PRINT("Q/CTRL+C -> Quit"); NL;
-            PRINT("T        -> Send SIGTERM to selected proc"); NL;
-            PRINT("S        -> Send signal to selected proc (opens signal selection menu)"); NL;
-            PRINT("ESC      -> Cancel send signal"); NL; printf(RESET);
+            PRINTF(WHITE CSI"48;5;4mK/J      -> Select Up/Down"); NL;
+            PRINTF("H        -> Toggle this help text"); NL;
+            PRINTF("Q/CTRL+C -> Quit"); NL;
+            PRINTF("T        -> Send SIGTERM to selected proc"); NL;
+            PRINTF("S        -> Send signal to selected proc (opens signal selection menu)"); NL;
+            PRINTF("ESC      -> Cancel send signal"); NL; printf(RESET);
         }
         printf(CSI"J"); // Clear the rest of the screen
         fflush(stdout);
