@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/ioctl.h>
+#include <signal.h>
 
 // see termios(3) 'Raw mode' for details
 void make_raw(struct termios *t) {
@@ -56,7 +57,7 @@ Divide the time data from the files by clock_tick to get the time in seconds
 #define MAX_SHOWN_SIGNALS 10
 
 typedef struct {
-    int pid;
+    pid_t pid;
     char cmdline[128];
     size_t time; // utime + stime
 } Proc;
@@ -126,7 +127,7 @@ int main(void) {
     size_t signals_scroll = 0, current_signal = 0;
     size_t procs_scroll = 0, current_proc = 0;
     size_t shown_procs = 0;
-    int current_pid = 0, current_thread = 0;
+    pid_t current_pid = 0, current_thread = 0;
     bool show_help = true;
     bool sending_signal = false;
     Procs procs = {0}; // Leaks
@@ -264,8 +265,7 @@ int main(void) {
                     
                 }
             } else if (!sending_signal && (c == 't' || c == 'T')) {
-                sprintf(tmp_str, "kill -s TERM %d", current_pid);
-                system(tmp_str);
+                kill(current_pid, SIGTERM);
             } else if (!sending_signal && (c == 's' || c == 'S')) {
                 sending_signal = true;
                 current_signal = 0;
