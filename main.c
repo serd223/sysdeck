@@ -141,7 +141,7 @@ int main(void) {
                         for (char* i = tmp_str; i < tmp_str + n;) {
                             int n = sprintf(tmp_cur, "%s ", i);
                             tmp_cur += n;
-                            i += n + 1;
+                            i += n;
                         }
                         fclose(cmdline);
 
