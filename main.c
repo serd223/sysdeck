@@ -35,7 +35,7 @@ Divide the time data from the files by clock_tick to get the time in seconds
 */
 
 #define PRINT(fmt) ((line_count + 1 < w_size.ws_row) ? printf(fmt) : 0)
-#define PRINTF(fmt, ...) ((line_count + 1 < w_size.ws_row) ? printf(fmt, __VA_ARGS__) : -1)
+#define PRINTF(fmt, ...) ((line_count + 1 < w_size.ws_row) ? printf(fmt, __VA_ARGS__) : 0)
 
 #define CSI "\033["
 #define NLC CSI"K\r\n"
@@ -217,19 +217,20 @@ int main(void) {
                 PRINT(CYAN);
             }
             // PRINTF macro returns 0 if we ran out of lines to print on (checked via line_count which is set by PRINTF and PRINT)
-            if (PRINTF("%4d"": ", p->pid) < 0) break;
+            if (PRINTF("%4d: ", p->pid) <= 0) break;
 
             int cmdline_len = (int)strlen(p->cmdline);
             bool fits = cmdline_len + PIDTEXT_LEN < w_size.ws_col;
+            int padding_size = 0;
             // Padding to center the cmdline text
-            if (fits) PRINTF("%*s", (w_size.ws_col - cmdline_len)/2 - PIDTEXT_LEN, "");
-
+            if (fits) padding_size = PRINTF("%*s", (w_size.ws_col - cmdline_len)/2 - PIDTEXT_LEN, "");
+            fits = cmdline_len + PIDTEXT_LEN + padding_size < w_size.ws_col;
 
             // Cut off the cmdline text if it doesn't fit on the screen
             if (is_current) {
-                PRINTF(BLACK"%.*s", fits ? cmdline_len : (w_size.ws_col - PIDTEXT_LEN), p->cmdline);
+                PRINTF(BLACK"%.*s", fits ? cmdline_len : (w_size.ws_col - PIDTEXT_LEN - padding_size), p->cmdline);
             } else {
-                PRINTF(GREEN"%.*s", fits ? cmdline_len : (w_size.ws_col - PIDTEXT_LEN), p->cmdline);
+                PRINTF(GREEN"%.*s", fits ? cmdline_len : (w_size.ws_col - PIDTEXT_LEN - padding_size), p->cmdline);
             }
             NL; PRINT(RESET);
         }
