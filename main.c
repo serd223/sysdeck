@@ -176,7 +176,7 @@ int main(void) {
     size_t procs_scroll = 0, current_proc = 0;
     size_t shown_procs = 0;
     pid_t current_pid = 0, current_thread = 0;
-    bool show_help = true;
+    bool show_help = false;
     InputFocus focus = FOCUS_PROCS;
     Procs procs = {0}; // Leaks
     Procs prev_procs = {0}; // Leaks
@@ -248,7 +248,7 @@ int main(void) {
         }
         closedir(proc_dir);
 
-        // Display procs
+        // Display top-panel (procs)
         size_t pi;
         for (pi = procs_scroll; pi < procs.len; ++pi) {
             if ((pi - procs_scroll) >= MAX_SHOWN_PROCS) break;
@@ -281,40 +281,68 @@ int main(void) {
         }
         shown_procs = pi - procs_scroll;
 
-        PRINTF(BLUE);
-        if (line_count + 1 < w_size.ws_row) for (int i = 0; i < w_size.ws_col; ++i) printf("-");
-        PRINTF(RESET); NL;
+        // Display the border between top and bottom panel
+        if (line_count + 1 < w_size.ws_row) {
+            printf(BLUE);
+            int len = sprintf(tmp_str, "Press H to toggle help");
+            for (int i = 0; i < (w_size.ws_col - len)/2; ++i) printf("-");
+            len +=(w_size.ws_col - len)/2;
+            printf("%s", tmp_str);
+            for (int i = len; i < w_size.ws_col; ++i) printf("-");
+            printf(RESET); NL;
+        }
 
+        // Display bottom-panel
         size_t shown_signals = 0;
-        if (focus == FOCUS_SIGNALS) {
-            size_t i;
-            for (i = signals_scroll; i < sizeof signals / sizeof signals[0]; ++i) {
-                int len;
-                bool is_current;
-                if ((is_current = ((i - signals_scroll) == current_signal))) {
-                    PRINTF(CSI"48;5;1m"BLACK);
+        switch (focus) {
+        case FOCUS_PROCS: {
+            if (show_help) {
+                PRINTF(WHITE CSI"48;5;4mK/J      -> Select Up/Down"); NL;
+                PRINTF("H        -> Toggle this help text"); NL;
+                PRINTF("Q/CTRL+C -> Quit"); NL;
+                PRINTF("T        -> Send SIGTERM to selected proc"); NL;
+                PRINTF("S        -> Send signal to selected proc"); NL;
+                printf(RESET);
+            } else {
+                PRINTF("TODO: CPU data"); NL;
+            }
+        } break;
+        case FOCUS_SIGNALS: {
+            if (show_help) {
+                PRINTF(WHITE CSI"48;5;4mK/J      -> Select Up/Down"); NL;
+                PRINTF("H        -> Toggle this help text"); NL;
+                PRINTF("Q/CTRL+C -> Quit"); NL;
+                PRINTF("ESC      -> Cancel sending signal"); NL;
+                PRINTF("RETURN   -> Send selected signal to the selected proc"); NL;
+            } else {
+                size_t i;
+                for (i = signals_scroll; i < sizeof signals / sizeof signals[0]; ++i) {
+                    bool is_current;
+                    if ((is_current = ((i - signals_scroll) == current_signal))) {
+                        PRINTF(CSI"48;5;1m"BLACK);
+                    }
+                    int len = sprintf(tmp_str, "%s", signals[i].str_repr);
+                    if (!PRINTF("%*s", (w_size.ws_col - len)/2, "")) break;
+                    if (!is_current) PRINTF(RED);
+                    PRINTF("%s", tmp_str);
+                    NL; PRINTF(RESET);
                 }
-                len = sprintf(tmp_str, "%s", signals[i].str_repr);
-                if (!PRINTF("%*s", (w_size.ws_col - len)/2, "")) break;
-                if (!is_current) PRINTF(RED);
-                PRINTF("%s", tmp_str);
-                NL; PRINTF(RESET);
+                shown_signals = i - signals_scroll;
             }
             printf(RESET);
-            shown_signals = i - signals_scroll;
-        } else if (show_help) {
-            PRINTF(WHITE CSI"48;5;4mK/J      -> Select Up/Down"); NL;
-            PRINTF("H        -> Toggle this help text"); NL;
-            PRINTF("Q/CTRL+C -> Quit"); NL;
-            PRINTF("T        -> Send SIGTERM to selected proc"); NL;
-            PRINTF("S        -> Send signal to selected proc"); NL;
-            PRINTF("            |-> Opens signal selection menu: RETURN to select, ESC to cancel"); NL;
-            printf(RESET);
+        } break;
+        case FOCUS_SEARCH: {
+                
+        } break;
+        case FOCUS_SORT: {
+                
+        } break;
         }
 
         printf(CSI"J"); // Clear the rest of the screen
         fflush(stdout);
 
+        // Handle input
         if (in_count > 0) {
             if (c == 3) { // CTRL+C
                 PRINTF("^C"); NL;
@@ -343,12 +371,15 @@ int main(void) {
                         kill(current_pid, SIGTERM);
                     } else if (c == 's' || c == 'S') {
                         focus = FOCUS_SIGNALS;
+                        show_help = false;
                         current_signal = 0;
                     }
                 } break;
                 case FOCUS_SIGNALS: {
                     if (c == 27) { // ESC
                         focus = FOCUS_PROCS;
+                    } else if (c == 'h' || c == 'H') {
+                        show_help = !show_help;
                     } else if (c == 'k' || c == 'K') {
                         if (current_signal <= 0) {
                             if (signals_scroll > 0) signals_scroll--;
