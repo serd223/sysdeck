@@ -308,8 +308,8 @@ int main(void) {
             PRINTF("Q/CTRL+C -> Quit"); NL;
             PRINTF("T        -> Send SIGTERM to selected proc"); NL;
             PRINTF("S        -> Send signal to selected proc"); NL;
-            PRINTF("            |->(opens signal selection menu, RETURN to select, ESC to cancel)"); NL;
-            PRINTF("ESC      -> Cancel send signal"); NL; printf(RESET);
+            PRINTF("            |-> Opens signal selection menu: RETURN to select, ESC to cancel"); NL;
+            printf(RESET);
         }
 
         printf(CSI"J"); // Clear the rest of the screen
