@@ -36,7 +36,8 @@ Divide the time data from the files by clock_tick to get the time in seconds
 
 #define PRINTF(...) ((line_count + 1 < w_size.ws_row) ? printf(__VA_ARGS__) : 0)
 
-#define CSI "\033["
+#define ESC "\033"
+#define CSI ESC"["
 #define NLC CSI"K\r\n"
 #define NL PRINTF(NLC); line_count++
 #define BLACK   CSI"30m"
@@ -66,17 +67,22 @@ typedef struct {
     size_t len, __cap;
 } Procs;
 
+void grow_procs(Procs* procs, size_t size) {
+    if (procs->__cap == 0) procs->items = malloc((procs->__cap = 4) * sizeof *procs->items);
+    if (size > procs->__cap) procs->items = realloc(procs->items, (procs->__cap *= (size % procs->__cap + 1)) * sizeof *procs->items);
+}
+
 void push_proc(Procs* procs, Proc proc) {
-    if (procs->__cap == 0) {
-        procs->__cap = 2;
-        procs->items = malloc(procs->__cap * sizeof (*procs->items));
-    }
-    if (procs->len >= procs->__cap) {
-        procs->__cap = procs->__cap * 2;
-        procs->items = realloc(procs->items, procs->__cap * sizeof (*procs->items));
-    }
+    grow_procs(procs, procs->len + 1);
     procs->items[procs->len++] = proc;
 }
+
+void copy_procs(Procs* src, Procs* dest) {
+    grow_procs(dest, src->len);
+    dest->items = memcpy(dest->items, src->items, src->len);
+    dest->len = src->len;
+}
+
 Proc* search_pid(Procs* procs, int pid) {
     for (size_t i = 0; i < procs->len; ++i) {
         if (procs->items[i].pid == pid) {
@@ -85,6 +91,49 @@ Proc* search_pid(Procs* procs, int pid) {
     }
     return NULL;
 }
+
+typedef struct {
+    const char* str_repr;
+    int code; 
+} Signal;
+
+Signal signals[] = {
+    { .str_repr = "SIGABRT", .code = SIGABRT },
+    { .str_repr = "SIGALRM", .code = SIGALRM },
+    { .str_repr = "SIGBUS", .code = SIGBUS },
+    { .str_repr = "SIGCHLD", .code = SIGCHLD },
+    { .str_repr = "SIGCONT", .code = SIGCONT },
+    { .str_repr = "SIGFPE", .code = SIGFPE },
+    { .str_repr = "SIGHUP", .code = SIGHUP },
+    { .str_repr = "SIGILL", .code = SIGILL },
+    { .str_repr = "SIGINT", .code = SIGINT },
+    { .str_repr = "SIGKILL", .code = SIGKILL },
+    { .str_repr = "SIGPIPE", .code = SIGPIPE },
+    { .str_repr = "SIGPOLL", .code = SIGPOLL },
+    { .str_repr = "SIGPROF", .code = SIGPROF },
+    { .str_repr = "SIGQUIT", .code = SIGQUIT },
+    { .str_repr = "SIGSEGV", .code = SIGSEGV },
+    { .str_repr = "SIGSTOP", .code = SIGSTOP },
+    { .str_repr = "SIGTSTP", .code = SIGTSTP },
+    { .str_repr = "SIGSYS", .code = SIGSYS },
+    { .str_repr = "SIGTERM", .code = SIGTERM },
+    { .str_repr = "SIGTRAP", .code = SIGTRAP },
+    { .str_repr = "SIGTTIN", .code = SIGTTIN },
+    { .str_repr = "SIGTTOU", .code = SIGTTOU },
+    { .str_repr = "SIGURG", .code = SIGURG },
+    { .str_repr = "SIGUSR1", .code = SIGUSR1 },
+    { .str_repr = "SIGUSR2", .code = SIGUSR2 },
+    { .str_repr = "SIGVTALRM", .code = SIGVTALRM },
+    { .str_repr = "SIGXCPU", .code = SIGXCPU },
+    { .str_repr = "SIGXFSZ", .code = SIGXFSZ },
+};
+
+typedef enum {
+    FOCUS_PROCS,
+    FOCUS_SIGNALS,
+    FOCUS_SEARCH, // TODO(SEARCHING)
+    FOCUS_SORT    // TODO(SORTING)
+} InputFocus;
 
 #define TMP_STR_SIZE 4096
 char tmp_str[TMP_STR_SIZE] = {0};
@@ -128,12 +177,9 @@ int main(void) {
     size_t shown_procs = 0;
     pid_t current_pid = 0, current_thread = 0;
     bool show_help = true;
-    bool sending_signal = false;
+    InputFocus focus = FOCUS_PROCS;
     Procs procs = {0}; // Leaks
     Procs prev_procs = {0}; // Leaks
-
-    // Unused: TODO(SIGNALS)
-    (void)signals_scroll; (void)current_signal;
 
     // Unused: TODO(THREADS)
     (void)current_thread;
@@ -144,8 +190,8 @@ int main(void) {
     // Main loop
     for (char c;;) {
         size_t line_count = 0; // NOTE: Assumes that all lines fit the width of the terminal
-        ssize_t n = read(STDIN_FILENO, &c, 1);
-        if (n < 0) {
+        ssize_t in_count = read(STDIN_FILENO, &c, 1);
+        if (in_count < 0) {
             fprintf(stderr, "[ERROR] %s\r\n", strerror(errno));
             break;
         }
@@ -193,8 +239,8 @@ int main(void) {
                     int cmdline_len = tmp_cur - tmp_str2;
 
                     // -1 just in case we somehow mess up the string buffers and are left without a null terminator
-                    bool fits = (size_t)cmdline_len < sizeof(p.cmdline) - 1;
-                    memcpy(p.cmdline, tmp_str2, fits ? cmdline_len : sizeof(p.cmdline) - 1);
+                    bool fits = (size_t)cmdline_len < sizeof (p.cmdline) - 1;
+                    memcpy(p.cmdline, tmp_str2, fits ? cmdline_len : sizeof (p.cmdline) - 1);
                     push_proc(&procs, p);
                 }
 
@@ -235,59 +281,101 @@ int main(void) {
         }
         shown_procs = pi - procs_scroll;
 
-        if (n > 0) {
+        PRINTF(BLUE);
+        if (line_count + 1 < w_size.ws_row) for (int i = 0; i < w_size.ws_col; ++i) printf("-");
+        PRINTF(RESET); NL;
+
+        size_t shown_signals = 0;
+        if (focus == FOCUS_SIGNALS) {
+            size_t i;
+            for (i = signals_scroll; i < sizeof signals / sizeof signals[0]; ++i) {
+                int len;
+                bool is_current;
+                if ((is_current = ((i - signals_scroll) == current_signal))) {
+                    PRINTF(CSI"48;5;1m"BLACK);
+                }
+                len = sprintf(tmp_str, "%s", signals[i].str_repr);
+                if (!PRINTF("%*s", (w_size.ws_col - len)/2, "")) break;
+                if (!is_current) PRINTF(RED);
+                PRINTF("%s", tmp_str);
+                NL; PRINTF(RESET);
+            }
+            printf(RESET);
+            shown_signals = i - signals_scroll;
+        } else if (show_help) {
+            PRINTF(WHITE CSI"48;5;4mK/J      -> Select Up/Down"); NL;
+            PRINTF("H        -> Toggle this help text"); NL;
+            PRINTF("Q/CTRL+C -> Quit"); NL;
+            PRINTF("T        -> Send SIGTERM to selected proc"); NL;
+            PRINTF("S        -> Send signal to selected proc"); NL;
+            PRINTF("            |->(opens signal selection menu, RETURN to select, ESC to cancel)"); NL;
+            PRINTF("ESC      -> Cancel send signal"); NL; printf(RESET);
+        }
+
+        printf(CSI"J"); // Clear the rest of the screen
+        fflush(stdout);
+
+        if (in_count > 0) {
             if (c == 3) { // CTRL+C
                 PRINTF("^C"); NL;
                 fflush(stdout);
                 break;
             } else if (c == 'q' || c == 'Q') {
-                break;  
-            } else if (!sending_signal && (c == 'h' || c == 'H')) {
-                show_help = !show_help;
-            } else if (c == 'k' || c == 'K') {
-                if (!sending_signal) {
-                    if (current_proc <= 0) {
-                        if (procs_scroll > 0) procs_scroll--;
-                    } else {
-                        current_proc--;
+                break;
+            } else {
+                switch (focus) {
+                case FOCUS_PROCS: {
+                    if (c == 'h' || c == 'H') {
+                        show_help = !show_help;
+                    } else if (c == 'k' || c == 'K') {
+                        if (current_proc <= 0) {
+                            if (procs_scroll > 0) procs_scroll--;
+                        } else {
+                            current_proc--;
+                        }
+                    } else if (c == 'j' || c == 'J') {
+                        if (current_proc >= shown_procs - 1) {
+                            if (shown_procs + procs_scroll < procs.len) procs_scroll++;
+                        } else {
+                            current_proc++;
+                        }
+                    } else if (c == 't' || c == 'T') {
+                        kill(current_pid, SIGTERM);
+                    } else if (c == 's' || c == 'S') {
+                        focus = FOCUS_SIGNALS;
+                        current_signal = 0;
                     }
-                } else {
-                    
-                }
-            } else if (c == 'j' || c == 'J') {
-                if (!sending_signal) {
-                    if (current_proc >= shown_procs - 1) {
-                        if (shown_procs + procs_scroll < procs.len) procs_scroll++;
-                    } else {
-                        current_proc++;
+                } break;
+                case FOCUS_SIGNALS: {
+                    if (c == 27) { // ESC
+                        focus = FOCUS_PROCS;
+                    } else if (c == 'k' || c == 'K') {
+                        if (current_signal <= 0) {
+                            if (signals_scroll > 0) signals_scroll--;
+                        } else {
+                            current_signal--;
+                        }
+                    } else if (c == 'j' || c == 'J') {
+                        if (current_signal >= shown_signals - 1) {
+                            if (shown_signals + signals_scroll < sizeof signals / sizeof signals[0]) signals_scroll++;
+                        } else {
+                            current_signal++;
+                        }
+                    } else if (c == '\r') {
+                        focus = FOCUS_PROCS;
+                        kill(current_pid, signals[current_signal + signals_scroll].code);
                     }
-                } else {
-                    
+                } break;
+                case FOCUS_SEARCH: {
+                        
+                } break;
+                case FOCUS_SORT: {
+                        
+                } break;
                 }
-            } else if (!sending_signal && (c == 't' || c == 'T')) {
-                kill(current_pid, SIGTERM);
-            } else if (!sending_signal && (c == 's' || c == 'S')) {
-                sending_signal = true;
-                current_signal = 0;
-            } else if (sending_signal && c == 27) { // ESC
-                sending_signal = false;
             }
-        }
-        PRINTF(BLUE);
-        if (line_count + 1 < w_size.ws_row) for (int i = 0; i < w_size.ws_col; ++i) printf("-");
-        PRINTF(RESET); NL;
-        if (show_help && !sending_signal) {
-            PRINTF(WHITE CSI"48;5;4mK/J      -> Select Up/Down"); NL;
-            PRINTF("H        -> Toggle this help text"); NL;
-            PRINTF("Q/CTRL+C -> Quit"); NL;
-            PRINTF("T        -> Send SIGTERM to selected proc"); NL;
-            PRINTF("S        -> Send signal to selected proc (opens signal selection menu)"); NL;
-            PRINTF("ESC      -> Cancel send signal"); NL; printf(RESET);
-        }
-        printf(CSI"J"); // Clear the rest of the screen
-        fflush(stdout);
+       }
     }
-
 
     // Cleanup
     tcsetattr(STDIN_FILENO, TCSANOW, &saved);
